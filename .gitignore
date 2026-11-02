@@ -1,0 +1,9 @@
+.DS_Store
+node_modules/
+dist/
+*.tgz
+.idea/
+
+# Real photos and the root certificate are not committed; see README "Tests".
+test/fixtures/*
+!test/fixtures/.gitkeep

@@ -1,0 +1,68 @@
+{
+  "name": "reference-image",
+  "version": "0.1.0",
+  "description": "Verify the signature of an Apple Reference Image (iPhone HEIC or JPEG) in Node or the browser: extracts the signed processed image, recomputes Apple's hash tree and checks the ML-DSA-87 + RSA-3072-PSS composite signature and certificate chain.",
+  "license": "MIT",
+  "author": "Privacy Preserving Systems Lab, University of Toronto",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pps-lab/reference-image-verifier-js.git"
+  },
+  "homepage": "https://github.com/pps-lab/reference-image-verifier-js#readme",
+  "bugs": "https://github.com/pps-lab/reference-image-verifier-js/issues",
+  "keywords": [
+    "apple",
+    "reference-image",
+    "provenance",
+    "ml-dsa",
+    "post-quantum",
+    "composite-signature",
+    "jpeg",
+    "heic",
+    "jumbf",
+    "iphone"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "reference-image": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm test",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@noble/post-quantum": "^0.7.1"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.5",
+    "@types/node": "^24.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.9.10",
+    "publint": "^0.3.25",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.72.1"
+  }
+}
