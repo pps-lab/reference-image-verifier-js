@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - The Apple Prove root certificate now ships in the package
   (`APPLE_PROVE_ROOT.der`), replacing the public-key pin. The root's validity
