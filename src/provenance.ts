@@ -52,6 +52,7 @@ import {
   RSA3072_SIG_LEN,
 } from "./composite.ts";
 import { APPLE_PROVE_ROOT } from "./anchors.ts";
+import type { ExifSummary } from "./exif.ts";
 import { VERSION } from "./version.ts";
 import {
   ParseError,
@@ -67,12 +68,10 @@ import {
 import type {
   CertificateRole,
   CertificateSummary,
-  ChainEntry,
   HeaderBox,
   Report,
   SignatureStatus,
   TimestampsBox,
-  TrustAnchorSummary,
   VerifyOptions,
   VerifyResult,
 } from "./report.ts";
@@ -204,36 +203,20 @@ function certSummary(
   };
 }
 
-/** A trust anchor: a full certificate from the caller, or the built-in key pin. */
-interface Anchor {
-  subjectDn: string;
-  subjectRaw: Uint8Array | null;
-  publicKey: Uint8Array;
-  cert: Certificate | null;
-}
-
-async function loadAnchors(ders: Uint8Array[] | undefined): Promise<Anchor[]> {
+async function loadAnchors(
+  ders: Uint8Array[] | undefined,
+): Promise<Certificate[]> {
   if (!ders) {
-    return [
-      {
-        subjectDn: APPLE_PROVE_ROOT.subject,
-        subjectRaw: null,
-        publicKey: APPLE_PROVE_ROOT.publicKey,
-        cert: null,
-      },
-    ];
+    const root = await parseCertificate(APPLE_PROVE_ROOT.der);
+    if (root.fingerprintSha256 !== APPLE_PROVE_ROOT.certSha256)
+      throw new Error(
+        "built-in root certificate does not match its fingerprint",
+      );
+    return [root];
   }
   if (!ders.length) throw new ParseError("trustAnchors must not be empty");
-  const out: Anchor[] = [];
-  for (const der of ders) {
-    const cert = await parseCertificate(der);
-    out.push({
-      subjectDn: cert.subject.dn,
-      subjectRaw: cert.subject.raw,
-      publicKey: cert.spki.keyBytes,
-      cert,
-    });
-  }
+  const out: Certificate[] = [];
+  for (const der of ders) out.push(await parseCertificate(der));
   return out;
 }
 
@@ -259,21 +242,10 @@ async function verifyCertWith(
   }
 }
 
-async function anchorSummary(a: Anchor, now: Date): Promise<ChainEntry> {
-  if (!a.cert) {
-    const s: TrustAnchorSummary = {
-      role: "root",
-      subject: APPLE_PROVE_ROOT.subject,
-      subjectCN: APPLE_PROVE_ROOT.subjectCN,
-      sha256: APPLE_PROVE_ROOT.certSha256,
-      algorithmOid: APPLE_PROVE_ROOT.algorithmOid,
-      algorithm: algorithmName(APPLE_PROVE_ROOT.algorithmOid),
-      embeddedInFile: false,
-      isTrustAnchor: true,
-    };
-    return s;
-  }
-  const c = a.cert;
+async function anchorSummary(
+  c: Certificate,
+  now: Date,
+): Promise<CertificateSummary> {
   return certSummary(c, "root", {
     embeddedInFile: false,
     verifiedBy: c.subject.cn,
@@ -283,11 +255,62 @@ async function anchorSummary(a: Anchor, now: Date): Promise<ChainEntry> {
   });
 }
 
+/** Prefix ParseErrors thrown by `fn` with `what`. */
+async function inStep<T>(what: string, fn: () => T | Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    if (e instanceof ParseError)
+      throw new ParseError(`${what}: ${e.message}`, { cause: e });
+    throw e;
+  }
+}
+
+function unrecognisedFile(b: Uint8Array): string {
+  const sig = (s: string, at = 0) => ascii(b, at, s.length) === s;
+  if (!b.length) return "The file is empty.";
+  const kind = sig("\x89PNG")
+    ? "a PNG image"
+    : sig("GIF8")
+      ? "a GIF image"
+      : sig("RIFF") && sig("WEBP", 8)
+        ? "a WebP image"
+        : sig("%PDF")
+          ? "a PDF document"
+          : sig("II*\0") || sig("MM\0*")
+            ? "a TIFF or raw image"
+            : null;
+  return kind
+    ? `This is ${kind}, not a JPEG or HEIC.`
+    : "Unrecognised file: expected a JPEG or HEIC/HEIF image.";
+}
+
+/** Guess from the outer photo's (unsigned) Exif why it has no provenance data. */
+function missingProvenanceHint(exif: ExifSummary | null): string {
+  if (!exif)
+    return "No readable Exif metadata: the photo was likely re-encoded or had its metadata stripped.";
+  if (exif.make !== "Apple")
+    return exif.make
+      ? `Camera make is "${exif.make}", not Apple.`
+      : "No camera make in the Exif metadata.";
+  if (exif.makerNote === null)
+    return "Exif has no MakerNote (0x927C): the metadata was likely rewritten by an editor or export.";
+  if (exif.makerNote === "other")
+    return "MakerNote is not Apple's: the metadata was likely rewritten by an editor or export.";
+  if (exif.appleReferenceFlag === 8)
+    return "Apple MakerNote flags a developed Reference Image (0x0063 = 8), but the signed data is missing: it was likely stripped on export or sharing.";
+  if (exif.appleReferenceFlag === null)
+    return "Apple MakerNote has no Reference Image flag (0x0063).";
+  return `Apple MakerNote Reference Image flag (0x0063) is ${exif.appleReferenceFlag}, not 8.`;
+}
+
 /**
  * Verify one photo file (JPEG export or HEIC) as an Apple Reference Image.
  *
- * Never rejects: malformed input yields `report.verdict.status === "error"`
- * and a photo without provenance data yields `"not-reference-image"`.
+ * Never rejects on bad file input: malformed bytes yield
+ * `report.verdict.status === "error"` and a photo without provenance data
+ * yields `"not-reference-image"`. An invalid `now` is a programmer error and
+ * throws a RangeError.
  */
 export async function verifyReferenceImage(
   bytes: Uint8Array,
@@ -324,22 +347,27 @@ export async function verifyReferenceImage(
   try {
     const anchors = await loadAnchors(opts.trustAnchors);
 
-    // 1. Container and carrier
     let carrier;
     if (isJpeg(bytes)) {
       report.file.container = "jpeg";
-      const outer = parseJpeg(bytes);
+      const outer = await inStep("The JPEG file is malformed", () =>
+        parseJpeg(bytes),
+      );
       Object.assign(report.file, outerJpegInfo(bytes, outer));
-      carrier = extractChunkedProvenance(bytes, outer);
+      carrier = await inStep("The provenance data is damaged", () =>
+        extractChunkedProvenance(bytes, outer),
+      );
     } else if (isHeif(bytes)) {
       report.file.container = "heif";
-      const info = parseHeif(bytes);
-      Object.assign(report.file, outerHeifInfo(bytes, info));
-      carrier = extractHeifProvenance(bytes, info);
-    } else {
-      throw new ParseError(
-        "Unrecognised file: expected a JPEG or HEIC/HEIF image.",
+      const info = await inStep("The HEIC file is malformed", () =>
+        parseHeif(bytes),
       );
+      Object.assign(report.file, outerHeifInfo(bytes, info));
+      carrier = await inStep("The provenance data is damaged", () =>
+        extractHeifProvenance(bytes, info),
+      );
+    } else {
+      throw new ParseError(unrecognisedFile(bytes));
     }
     if (!carrier) {
       report.verdict.status = "not-reference-image";
@@ -347,6 +375,7 @@ export async function verifyReferenceImage(
         report.file.container === "jpeg"
           ? "No Apple provenance APP3 chunks found. This JPEG does not carry a Reference Image."
           : "No provenance item (tag:apple.com,2025:photo:metadata:provenance:processedimage) found. This HEIC does not carry a Reference Image.",
+        missingProvenanceHint(report.file.exif),
       );
       return { report, processedJpeg: null };
     }
@@ -354,14 +383,19 @@ export async function verifyReferenceImage(
     report.carrier = carrierFacts;
     processedJpeg = data;
 
-    // 2. Processed JPEG structure
-    const pj = parseJpeg(data);
-    const jumbf: JumbfSegment[] = [];
-    for (const s of pj.segments)
-      if (s.marker === 0xeb) {
-        const j = parseJumbfSegment(data, s);
-        if (j) jumbf.push(j);
-      }
+    const { pj, jumbf } = await inStep(
+      "The embedded processed image is malformed",
+      () => {
+        const pj = parseJpeg(data);
+        const jumbf: JumbfSegment[] = [];
+        for (const s of pj.segments)
+          if (s.marker === 0xeb) {
+            const j = parseJumbfSegment(data, s);
+            if (j) jumbf.push(j);
+          }
+        return { pj, jumbf };
+      },
+    );
     const byUuid = (u: string) => jumbf.find((j) => j.box.uuid === u);
     const hdr = byUuid(UUID.header),
       ts = byUuid(UUID.timestamps),
@@ -414,7 +448,8 @@ export async function verifyReferenceImage(
         iso: values.map((v) => new Date(v * 1000).toISOString()),
       };
     }
-    // signature box
+    // signature box: inner uuid box | 00000000 | u32 sigLen | SignatureData DER
+    //                | u32 bundleLen | SignatureParameters DER | trailer
     const inner = parseBox(data, mut.box.contentStart, mut.box.contentEnd);
     if (inner.uuid !== UUID.signatureInner)
       throw new ParseError(
@@ -495,7 +530,6 @@ export async function verifyReferenceImage(
       })),
     };
 
-    // 3. Hash tree
     const minor = specVersion[1];
     const P = await sha512(data.subarray(0, box3.start));
     const S = await sha512(
@@ -524,22 +558,21 @@ export async function verifyReferenceImage(
         ctxLength: 0,
         ctx: "",
         digest: hex(combined),
-        totalBytes: 32 + 34 + 1 + 64,
+        totalBytes: PREFIX.length + LABEL.length + 1 + combined.length,
       },
     };
 
-    // 4. Signature and certificates
-    const sigDer = parseSignatureDer(data, sigDerOffset, sigLen);
-    const bundle = await parseBundleDer(data, bundleOffset, bundleLen);
+    const sigDer = await inStep("The signature is malformed", () =>
+      parseSignatureDer(data, sigDerOffset, sigLen),
+    );
+    const bundle = await inStep("The certificate bundle is malformed", () =>
+      parseBundleDer(data, bundleOffset, bundleLen),
+    );
 
     // Order bundle certs: the leaf is the one nobody else names as issuer.
     const certs = bundle.certificates;
-    const anchorFor = (c: Certificate): Anchor | undefined =>
-      anchors.find((a) =>
-        a.subjectRaw
-          ? equalBytes(a.subjectRaw, c.issuer.raw)
-          : a.subjectDn === c.issuer.dn,
-      );
+    const anchorFor = (c: Certificate): Certificate | undefined =>
+      anchors.find((a) => equalBytes(a.subject.raw, c.issuer.raw));
     const issuedBy = (c: Certificate): Certificate | undefined =>
       certs.find((x) => x !== c && equalBytes(x.subject.raw, c.issuer.raw));
     const leaf =
@@ -592,12 +625,7 @@ export async function verifyReferenceImage(
       mPrimeHex: imageSig.mPrime ? hex(imageSig.mPrime) : null,
     };
 
-    const roles: CertificateRole[] = [
-      "signer",
-      "issuing-ca",
-      "intermediate-ca",
-      "intermediate-ca",
-    ];
+    const roles: CertificateRole[] = ["signer", "issuing-ca"];
     const chainErrors: string[] = [];
     for (let k = 0; k < ordered.length; k++) {
       const c = ordered[k]!;
@@ -614,12 +642,11 @@ export async function verifyReferenceImage(
         verifiedBy = issuerCert.subject.cn;
       } else if (issuerAnchor) {
         sig = await verifyCertWith(
-          issuerAnchor.publicKey,
-          issuerAnchor.cert?.spki.algorithmOid ?? APPLE_PROVE_ROOT.algorithmOid,
+          issuerAnchor.spki.keyBytes,
+          issuerAnchor.spki.algorithmOid,
           c,
         );
-        verifiedBy =
-          issuerAnchor.cert?.subject.cn ?? APPLE_PROVE_ROOT.subjectCN;
+        verifiedBy = issuerAnchor.subject.cn;
       }
       const withinValidity = c.notBefore <= now && now <= c.notAfter;
       const cn = c.subject.cn ?? c.subject.dn;
@@ -644,12 +671,10 @@ export async function verifyReferenceImage(
     }
     const reported = matchedAnchor ?? anchors[0]!;
     const anchorEntry = await anchorSummary(reported, now);
-    if ("withinValidity" in anchorEntry) {
-      if (!anchorEntry.withinValidity)
-        chainErrors.push("Root: outside validity period");
-      if (!anchorEntry.signature.valid)
-        chainErrors.push("Root: self-signature invalid");
-    }
+    if (!anchorEntry.withinValidity)
+      chainErrors.push("Root: outside validity period");
+    if (!anchorEntry.signature.valid)
+      chainErrors.push("Root: self-signature invalid");
     report.certificates.push(anchorEntry);
     if (!chainReachesAnchor)
       chainErrors.push("Chain does not end at a trusted root");
@@ -666,7 +691,6 @@ export async function verifyReferenceImage(
       developedWithinSignerValidity: developedWithinSigner,
     };
 
-    // 5. Verdict
     const reasons: string[] = [];
     if (!imageSig.valid)
       reasons.push(

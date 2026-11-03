@@ -1,7 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { verifyReferenceImage } from "../src/index.ts";
+import {
+  verifyReferenceImage,
+  parseCertificate,
+  parseJpeg,
+} from "../src/index.ts";
 import type { Report } from "../src/index.ts";
+import { readTLV, children } from "../src/asn1.ts";
+import { concat } from "../src/util.ts";
 import { hasFixture, loadFixture, NOW } from "./fixtures.ts";
 
 const GOLD = {
@@ -67,13 +73,14 @@ for (const [name, g] of Object.entries(GOLD)) {
         ["signer", "issuing-ca", "root"],
       );
       for (const c of r.certificates.slice(0, 2)) {
-        assert.ok("withinValidity" in c);
         assert.ok(c.signature.valid && c.withinValidity, c.subject);
       }
       const root = r.certificates[2]!;
       assert.ok(root.isTrustAnchor);
       assert.equal(root.embeddedInFile, false);
-      assert.ok(!("serial" in root), "pin mode reports no certificate fields");
+      assert.equal(root.serial, "63244EB094AA7DB3150CF12216B4A4FC");
+      assert.ok(root.withinValidity);
+      assert.ok(root.signature.valid, "built-in root self-signature");
       assert.ok(r.chain?.reachesTrustAnchor);
       assert.ok(r.chain?.valid);
       assert.equal(r.boxes?.timestamps?.unix.length, 3);
@@ -98,7 +105,6 @@ for (const [name, g] of Object.entries(GOLD)) {
       );
       assert.equal(r.verdict.status, "pass", JSON.stringify(r.verdict));
       const anchor = r.certificates[2]!;
-      assert.ok("withinValidity" in anchor);
       assert.equal(anchor.role, "root");
       assert.equal(anchor.serial, "63244EB094AA7DB3150CF12216B4A4FC");
       assert.ok(anchor.withinValidity);
@@ -118,15 +124,11 @@ for (const [name, g] of Object.entries(GOLD)) {
         { now: NOW },
       );
       const box = first.boxes!.signature;
-      // Bundle: SEQUENCE { version, alg, SEQUENCE OF Certificate }; grab the
-      // first certificate by re-parsing with the public API.
-      const { parseCertificate } = await import("../src/index.ts");
       const bundle = processedJpeg!.subarray(
         box.bundleOffset,
         box.bundleOffset + box.bundleLength,
       );
-      // Walk to the certificate list: skip outer header, version, alg.
-      const { readTLV, children } = await import("../src/asn1.ts");
+      // SignatureParameters ::= SEQUENCE { version, alg, SEQUENCE OF Certificate }
       const outer = readTLV(bundle, 0);
       const list = children(bundle, outer)[2]!;
       const firstCert = children(bundle, list)[0]!;
@@ -245,6 +247,26 @@ for (const name of ["IMG_0071.JPG", "IMG_0073.HEIC"]) {
     },
   );
 }
+
+test(
+  "a real photo with its APP3 chunks removed is reported as stripped",
+  { skip: missing("IMG_0071.JPG") },
+  async () => {
+    const bytes = await loadFixture("IMG_0071.JPG");
+    const app3 = parseJpeg(bytes).segments.filter((s) => s.marker === 0xe3);
+    const parts: Uint8Array[] = [];
+    let at = 0;
+    for (const s of app3) {
+      parts.push(bytes.subarray(at, s.offset));
+      at = s.offset + s.length;
+    }
+    const stripped = concat(...parts, bytes.subarray(at));
+    const { report } = await verifyReferenceImage(stripped, { now: NOW });
+    assert.equal(report.verdict.status, "not-reference-image");
+    assert.equal(report.file.exif?.makerNote, "apple");
+    assert.match(report.verdict.reasons[1]!, /signed data is missing/);
+  },
+);
 
 test(
   "truncated input fails cleanly",

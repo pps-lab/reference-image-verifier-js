@@ -53,7 +53,7 @@ export async function sha256(bytes: Uint8Array): Promise<Uint8Array> {
   );
 }
 
-/** Big-endian readers. Out-of-range reads yield NaN-free garbage, so callers bounds-check first. */
+/** Big-endian readers. Bytes past the end read as zero, so callers bounds-check first. */
 export function u16(b: Uint8Array, o: number): number {
   return ((b[o]! << 8) | b[o + 1]!) >>> 0;
 }

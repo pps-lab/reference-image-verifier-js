@@ -1,7 +1,7 @@
 {
   "name": "reference-image",
   "version": "0.1.0",
-  "description": "Verify the signature of an Apple Reference Image (iPhone HEIC or JPEG) in Node or the browser: extracts the signed processed image, recomputes Apple's hash tree and checks the ML-DSA-87 + RSA-3072-PSS composite signature and certificate chain.",
+  "description": "Verify the ML-DSA-87 + RSA-3072-PSS signature of an Apple Reference Image (iPhone HEIC or JPEG) in Node or the browser.",
   "license": "MIT",
   "author": "Privacy Preserving Systems Lab, University of Toronto",
   "repository": {
@@ -36,7 +36,7 @@
   },
   "types": "./dist/index.d.ts",
   "bin": {
-    "reference-image": "./dist/cli.js"
+    "reference-image": "dist/cli.js"
   },
   "files": [
     "dist",

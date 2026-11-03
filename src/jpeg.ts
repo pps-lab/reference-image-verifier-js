@@ -98,9 +98,10 @@ export function parseJpeg(bytes: Uint8Array): ParsedJpeg {
       throw new ParseError(`JPEG: expected marker at ${i}`);
     const m = bytes[i + 1]!;
     if (m === 0xff) {
+      // fill byte
       i++;
       continue;
-    } // fill byte
+    }
     if (m === 0xd9) {
       segments.push({
         marker: m,

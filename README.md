@@ -35,11 +35,11 @@ files give `status: "error"`, photos without provenance data give
 
 ### Options
 
-| option         | type                 | description                                                                                                                                                   |
-| -------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `fileName`     | `string`             | Recorded in `report.file.name`.                                                                                                                               |
-| `now`          | `Date \| string`     | Reference time for certificate validity (default: now).                                                                                                       |
-| `trustAnchors` | `Uint8Array[]` (DER) | Root certificates to trust instead of the built-in public-key pin. With a full certificate the root's validity period and self-signature are checked as well. |
+| option         | type                 | description                                                                                                                                |
+| -------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `fileName`     | `string`             | Recorded in `report.file.name`.                                                                                                            |
+| `now`          | `Date \| string`     | Reference time for certificate validity (default: now).                                                                                    |
+| `trustAnchors` | `Uint8Array[]` (DER) | Root certificates to trust instead of the built-in Apple Prove root. The root's validity period and self-signature are checked either way. |
 
 ### CLI
 
@@ -61,8 +61,8 @@ Exit status 0 when the verdict is `pass`, 1 otherwise.
    a HEIC it is a `uri ` item (`tag:apple.com,2025:photo:metadata:provenance:processedimage`)
    linked to the primary image with a `cdsc` reference.
 2. **Hashes it Apple's way.** With `box3` = the whole APP11 segment whose JUMBF
-   box is `62030736-1e8d-403d-b1ce-ef0744a9c392`, and `excluded` = the u32 length
-   - the signature DER inside it:
+   box is `62030736-1e8d-403d-b1ce-ef0744a9c392`, and `excluded` = the u32
+   length field plus the signature DER that follows it:
 
    ```
    P = SHA-512( jpeg[0 : box3.start] )
@@ -79,9 +79,10 @@ Exit status 0 when the verdict is `pass`, 1 otherwise.
 4. **Verifies the certificate chain** signer → "Apple Prove ML-DSA RSA Issuing
    CA 1 - G1" → "Apple Prove ML-DSA RSA Root CA G1", each with the same
    composite construction over the TBSCertificate, plus validity dates. The
-   root's public key, subject and certificate fingerprint (SHA-256
-   `8D7224AE…8A5B`) are pinned in `src/anchors.ts`; the certificate itself is
-   not distributed. Pass it through `trustAnchors` if you have it.
+   root certificate (SHA-256 `8D7224AE…8A5B`) ships in the package
+   (`APPLE_PROVE_ROOT.der`, generated into `src/anchors.ts`), so its validity
+   period and self-signature are checked too. Use `trustAnchors` to trust a
+   different root instead.
 
 **Not checked:** revocation (iOS queries an Apple service with a per-photo
 digest), the `ProvoloneProcessedSigning` certificate policy constraints, and
@@ -115,19 +116,19 @@ npm run build   # dist/
 
 ### Tests
 
-The golden tests need two real iPhone 18 Pro Reference Images and the root
-certificate, which are **not** committed. Put them in `test/fixtures/`
-(gitignored) or point `REFERENCE_IMAGE_FIXTURES` at a directory containing:
+The golden tests need two real iPhone 18 Pro Reference Images, which are
+**not** committed, and optionally the root certificate. Put them in
+`test/fixtures/` (gitignored) or point `REFERENCE_IMAGE_FIXTURES` at a directory containing:
 
 - `IMG_0071.JPG` (JPEG export), `IMG_0073.HEIC`
-- `root.cer` (the Apple Prove root CA, DER)
+- `root.cer` (the Apple Prove root CA, DER; checked against the built-in copy)
 
 Tests that need a missing fixture are skipped; everything else runs in CI.
 
-### Regenerating the root pin
+### Regenerating the built-in root
 
 ```sh
-node scripts/pin-root.ts path/to/root.cer > src/anchors.ts
+node scripts/embed-root.ts path/to/root.cer > src/anchors.ts
 ```
 
 ## License

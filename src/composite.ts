@@ -134,8 +134,9 @@ export interface CompositeVerifyResult {
 
 /**
  * Verify a composite signature. Pass either `message` (hashed here with
- * SHA-512) or `digest` (the 64-byte pre-hash). Malformed keys or signatures
- * throw a ParseError; cryptographic failure returns `valid: false`.
+ * SHA-512) or `digest` (the 64-byte pre-hash). A key or signature of the
+ * wrong length throws a ParseError; anything else that fails, including an
+ * RSA key WebCrypto will not import, returns `valid: false`.
  */
 export async function verifyComposite({
   publicKey,
@@ -150,9 +151,9 @@ export async function verifyComposite({
   const mPrime = buildMPrime(pre, ctx);
   const key = splitPublicKey(publicKey);
   const sig = splitSignature(signature);
-  const [mldsa, rsa] = await Promise.all([
-    Promise.resolve(verifyMlDsa(key.mldsa, mPrime, sig.mldsa)),
-    verifyRsaPss(key.rsaPublicKeyDer, mPrime, sig.rsa).catch(() => false),
-  ]);
+  const mldsa = verifyMlDsa(key.mldsa, mPrime, sig.mldsa);
+  const rsa = await verifyRsaPss(key.rsaPublicKeyDer, mPrime, sig.rsa).catch(
+    () => false,
+  );
   return { mldsa, rsa, valid: mldsa && rsa, mPrime };
 }

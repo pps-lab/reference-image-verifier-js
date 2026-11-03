@@ -31,6 +31,134 @@ test("garbage input yields an error verdict, never a throw", async () => {
 test("empty input", async () => {
   const { report } = await verifyReferenceImage(new Uint8Array());
   assert.equal(report.verdict.status, "error");
+  assert.equal(report.verdict.reasons[0], "The file is empty.");
+});
+
+test("other file types are named in the error", async () => {
+  const enc = (s: string) => Array.from(s, (c) => c.charCodeAt(0));
+  for (const [bytes, re] of [
+    [[0x89, ...enc("PNG\r\n\x1a\n"), 0, 0, 0, 0], /PNG image/],
+    [enc("GIF89a\0\0\0\0"), /GIF image/],
+    [enc("RIFF\0\0\0\0WEBPVP8 "), /WebP image/],
+  ] as const) {
+    const { report } = await verifyReferenceImage(Uint8Array.from(bytes));
+    assert.equal(report.verdict.status, "error");
+    assert.match(report.verdict.reasons[0]!, re);
+  }
+});
+
+/** Big-endian TIFF with optional Make and an Exif IFD with an optional MakerNote. */
+function tiff(opts: { make?: string; makerNote?: number[] }): number[] {
+  const out: number[] = [];
+  const u16 = (v: number) => out.push(v >> 8, v & 0xff);
+  const u32 = (v: number) =>
+    out.push(v >>> 24, (v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff);
+  const make =
+    opts.make === undefined
+      ? null
+      : [...new TextEncoder().encode(opts.make), 0];
+  const n0 = (make ? 1 : 0) + 1;
+  const ifd0End = 8 + 2 + 12 * n0 + 4;
+  const makeOff = ifd0End;
+  const exifOff = makeOff + (make?.length ?? 0);
+  const mn = opts.makerNote;
+  const mnOff = exifOff + 2 + (mn ? 12 : 0) + 4;
+  const entry = (tag: number, type: number, count: number, value: number) => {
+    u16(tag);
+    u16(type);
+    u32(count);
+    u32(value);
+  };
+  out.push(0x4d, 0x4d, 0, 0x2a);
+  u32(8);
+  u16(n0);
+  if (make) entry(0x010f, 2, make.length, makeOff);
+  entry(0x8769, 4, 1, exifOff);
+  u32(0);
+  if (make) out.push(...make);
+  u16(mn ? 1 : 0);
+  if (mn) entry(0x927c, 7, mn.length, mnOff);
+  u32(0);
+  if (mn) out.push(...mn);
+  return out;
+}
+
+/** "Apple iOS" MakerNote, optionally with the Reference Image flag (tag 0x0063). */
+function appleMakerNote(flag?: number): number[] {
+  const out = [...new TextEncoder().encode("Apple iOS\0"), 0, 1, 0x4d, 0x4d];
+  if (flag === undefined) return [...out, 0, 0];
+  return [
+    ...out,
+    0,
+    1,
+    0,
+    0x63,
+    0,
+    4,
+    0,
+    0,
+    0,
+    1,
+    flag >>> 24,
+    (flag >> 16) & 0xff,
+    (flag >> 8) & 0xff,
+    flag & 0xff,
+  ];
+}
+
+const exifJpeg = (t: number[]) =>
+  jpeg(app(0xe1, [...new TextEncoder().encode("Exif\0\0"), ...t]));
+
+test("a JPEG without provenance explains why from its Exif", async () => {
+  const cases: [Uint8Array, RegExp][] = [
+    [
+      jpeg(app(0xe0, [0x4a, 0x46, 0x49, 0x46, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0])),
+      /No readable Exif metadata/,
+    ],
+    [exifJpeg(tiff({ make: "Canon" })), /Camera make is "Canon", not Apple/],
+    [exifJpeg(tiff({})), /No camera make/],
+    [exifJpeg(tiff({ make: "Apple" })), /no MakerNote \(0x927C\)/],
+    [
+      exifJpeg(
+        tiff({
+          make: "Apple",
+          makerNote: [...new TextEncoder().encode("Nikon\0\0\0\0\0\0\0\0\0")],
+        }),
+      ),
+      /MakerNote is not Apple's/,
+    ],
+    [
+      exifJpeg(tiff({ make: "Apple", makerNote: appleMakerNote() })),
+      /no Reference Image flag/,
+    ],
+    [
+      exifJpeg(tiff({ make: "Apple", makerNote: appleMakerNote(3) })),
+      /is 3, not 8/,
+    ],
+    [
+      exifJpeg(tiff({ make: "Apple", makerNote: appleMakerNote(8) })),
+      /signed data is missing/,
+    ],
+  ];
+  for (const [bytes, re] of cases) {
+    const { report } = await verifyReferenceImage(bytes);
+    assert.equal(report.verdict.status, "not-reference-image");
+    assert.match(report.verdict.reasons[0]!, /No Apple provenance APP3 chunks/);
+    assert.match(report.verdict.reasons[1]!, re);
+  }
+});
+
+test("readExif reports the MakerNote kind and flag", () => {
+  assert.equal(
+    readExif(Uint8Array.from(tiff({ make: "Apple" }))).makerNote,
+    null,
+  );
+  const e = readExif(
+    Uint8Array.from(tiff({ make: "Apple", makerNote: appleMakerNote(8) })),
+  );
+  assert.equal(e.make, "Apple");
+  assert.equal(e.makerNote, "apple");
+  assert.equal(e.appleReferenceFlag, 8);
 });
 
 test("a plain JPEG without provenance chunks is not a reference image", async () => {

@@ -12,7 +12,7 @@ Verify the Apple Reference Image signature of an iPhone photo.
 Options:
   --json                 Print the full JSON report instead of a summary
   --trust-anchor <file>  Root certificate (DER) to trust instead of the
-                         built-in public-key pin; may be repeated
+                         built-in Apple Prove root; may be repeated
   -h, --help             Show this help
   -v, --version          Print the version
 
@@ -71,12 +71,7 @@ if (args.values.json) {
     );
   }
   for (const c of report.certificates) {
-    const status =
-      "withinValidity" in c
-        ? c.signature.valid && c.withinValidity
-          ? "ok"
-          : "FAIL"
-        : "pinned";
+    const status = c.signature.valid && c.withinValidity ? "ok" : "FAIL";
     console.log(
       `  ${c.role.padEnd(12)} ${c.subjectCN ?? c.subject}  [${status}]`,
     );

@@ -22,7 +22,7 @@ test("VERSION matches package.json", async () => {
   assert.equal(VERSION, pkg.version);
 });
 
-test("pinned root: key splits into ML-DSA-87 || RSAPublicKey", () => {
+test("built-in root: key splits into ML-DSA-87 || RSAPublicKey", () => {
   const { mldsa, rsaPublicKeyDer } = splitPublicKey(APPLE_PROVE_ROOT.publicKey);
   assert.equal(mldsa.length, MLDSA87_PK_LEN);
   // RSAPublicKey ::= SEQUENCE { modulus INTEGER (3072 bit), publicExponent INTEGER }
@@ -64,28 +64,23 @@ test("verifyComposite: garbage signature of the right length fails both halves",
 
 const noRoot = hasFixture("root.cer") ? false : "fixture root.cer not present";
 
-test(
-  "root certificate matches the pin and is self-signed",
-  { skip: noRoot },
-  async () => {
-    const root = await parseCertificate(await loadFixture("root.cer"));
-    assert.equal(root.fingerprintSha256, APPLE_PROVE_ROOT.certSha256);
-    assert.equal(root.subject.dn, APPLE_PROVE_ROOT.subject);
-    assert.equal(root.subject.cn, APPLE_PROVE_ROOT.subjectCN);
-    assert.deepEqual(root.spki.keyBytes, APPLE_PROVE_ROOT.publicKey);
-    assert.equal(root.algorithmOid, COMPOSITE_OID);
-    assert.ok(root.selfIssued);
-    const r = await verifyComposite({
-      publicKey: root.spki.keyBytes,
-      signature: root.signature,
-      message: root.tbs,
-    });
-    assert.deepEqual(
-      { mldsa: r.mldsa, rsa: r.rsa },
-      { mldsa: true, rsa: true },
-    );
-  },
-);
+test("root.cer fixture is the built-in root", { skip: noRoot }, async () => {
+  const fixture = await loadFixture("root.cer");
+  assert.deepEqual(fixture, APPLE_PROVE_ROOT.der);
+  const root = await parseCertificate(fixture);
+  assert.equal(root.fingerprintSha256, APPLE_PROVE_ROOT.certSha256);
+  assert.equal(root.subject.dn, APPLE_PROVE_ROOT.subject);
+  assert.equal(root.subject.cn, APPLE_PROVE_ROOT.subjectCN);
+  assert.deepEqual(root.spki.keyBytes, APPLE_PROVE_ROOT.publicKey);
+  assert.equal(root.algorithmOid, COMPOSITE_OID);
+  assert.ok(root.selfIssued);
+  const r = await verifyComposite({
+    publicKey: root.spki.keyBytes,
+    signature: root.signature,
+    message: root.tbs,
+  });
+  assert.deepEqual({ mldsa: r.mldsa, rsa: r.rsa }, { mldsa: true, rsa: true });
+});
 
 test("a flipped TBS byte breaks both halves", { skip: noRoot }, async () => {
   const root = await parseCertificate(await loadFixture("root.cer"));

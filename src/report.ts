@@ -183,19 +183,8 @@ export interface CertificateSummary {
   isTrustAnchor: boolean;
 }
 
-/** The pinned root: only its subject, fingerprint and public key are known. */
-export interface TrustAnchorSummary {
-  role: "root";
-  subject: string;
-  subjectCN: string;
-  sha256: string;
-  algorithmOid: string;
-  algorithm: string;
-  embeddedInFile: false;
-  isTrustAnchor: true;
-}
-
-export type ChainEntry = CertificateSummary | TrustAnchorSummary;
+/** Kept for compatibility; the root is now a CertificateSummary too. */
+export type ChainEntry = CertificateSummary;
 
 export interface ChainInfo {
   valid: boolean;
@@ -217,7 +206,7 @@ export interface Report {
   boxes: Boxes | null;
   hashing: Hashing | null;
   signature: SignatureInfo | null;
-  certificates: ChainEntry[];
+  certificates: CertificateSummary[];
   chain: ChainInfo | null;
   verdict: Verdict;
   error?: { name: string; message: string };
@@ -229,9 +218,8 @@ export interface VerifyOptions {
   /** Reference time for certificate validity; defaults to now. */
   now?: Date | string;
   /**
-   * Root certificates (DER) to trust instead of the built-in public-key pin.
-   * With a full certificate the root's validity period and self-signature are
-   * checked too, and it is reported as a CertificateSummary.
+   * Root certificates (DER) to trust instead of the built-in Apple Prove root.
+   * The root's validity period and self-signature are checked either way.
    */
   trustAnchors?: Uint8Array[];
 }

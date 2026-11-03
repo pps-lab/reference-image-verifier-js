@@ -11,6 +11,8 @@ export interface ExifSummary {
   dateTimeOriginal: string | null;
   /** e.g. "2.32" */
   exifVersion: string | null;
+  /** MakerNote (0x927C): "apple" if it starts with "Apple iOS", else "other"; null if absent. */
+  makerNote: "apple" | "other" | null;
   /** Apple MakerNote tag 0x0063; 8 on developed Reference Images. */
   appleReferenceFlag: number | null;
 }
@@ -57,6 +59,7 @@ export function readExif(tiff: Uint8Array): ExifSummary {
     software: null,
     dateTimeOriginal: null,
     exifVersion: null,
+    makerNote: null,
     appleReferenceFlag: null,
   };
   try {
@@ -85,7 +88,8 @@ export function readExif(tiff: Uint8Array): ExifSummary {
     if (!mn) return out;
     const mnOff = r.u32(mn.valueOff);
     const note = tiff.subarray(mnOff, mnOff + mn.count);
-    if (ascii(note, 0, 9) !== "Apple iOS") return out;
+    out.makerNote = ascii(note, 0, 9) === "Apple iOS" ? "apple" : "other";
+    if (out.makerNote !== "apple") return out;
     const nle = ascii(note, 12, 2) === "II";
     const nr = reader(note, nle);
     const entries = ifdEntries(note, nr, 14);

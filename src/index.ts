@@ -24,7 +24,6 @@ export type {
   SignatureStatus,
   CertificateRole,
   CertificateSummary,
-  TrustAnchorSummary,
   ChainEntry,
   ChainInfo,
 } from "./report.ts";
