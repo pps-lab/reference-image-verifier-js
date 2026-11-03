@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
 - Breaking: `verdict.notChecked` and `verdict.caveats` are removed from the
   report; the lists are still exported as `NOT_CHECKED` and `CAVEATS`.
