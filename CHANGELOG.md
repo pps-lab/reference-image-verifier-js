@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Breaking: `verdict.notChecked` and `verdict.caveats` are removed from the
+  report; the lists are still exported as `NOT_CHECKED` and `CAVEATS`.
+
 ## 0.2.0
 
 - The Apple Prove root certificate now ships in the package
@@ -12,8 +17,6 @@
   from its Exif: no Exif, non-Apple make, missing or non-Apple MakerNote, or
   the Reference Image flag (0x0063) missing, not 8, or 8 with the data
   stripped. New `ExifSummary.makerNote` field.
-- Breaking: `verdict.notChecked` and `verdict.caveats` are removed from the
-  report; the lists are still exported as `NOT_CHECKED` and `CAVEATS`.
 - Parse errors name the part of the file that failed. Empty, PNG, GIF, WebP,
   PDF and TIFF files are identified.
 
