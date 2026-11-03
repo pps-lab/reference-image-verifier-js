@@ -1,12 +1,7 @@
 # reference-image
 
 Verify the signature of an **Apple Reference Image** (an iPhone photo developed
-and signed by Apple's Private Cloud Compute) in Node or the browser, and get a
-detailed, JSON-serialisable report of what the file contains.
-
-Zero network access. One runtime dependency
-([`@noble/post-quantum`](https://github.com/paulmillr/noble-post-quantum) for
-ML-DSA-87); RSA-PSS and SHA-2 use WebCrypto. ESM only, TypeScript types included.
+and signed by Apple's Private Cloud Compute) in Node or the browser.
 
 ```sh
 npm install reference-image
@@ -30,7 +25,7 @@ processedJpeg; // the embedded JPEG that the signature actually covers
 ```
 
 `verifyReferenceImage` never throws on bad input: unrecognised or malformed
-files give `status: "error"`, photos without provenance data give
+files return `status: "error"`, photos without provenance data give
 `"not-reference-image"`.
 
 ### Options
@@ -85,11 +80,9 @@ Exit status 0 when the verdict is `pass`, 1 otherwise.
    different root instead.
 
 **Not checked:** revocation (iOS queries an Apple service with a per-photo
-digest), the `ProvoloneProcessedSigning` certificate policy constraints, and
-iOS's five-year age limit. The signature binds the hidden processed image
-only, not the outer photo's pixels or metadata, and the signer is Apple's
-development service, not the capturing iPhone. The report lists these under
-`verdict.notChecked` and `verdict.caveats`.
+digest). The signature binds the hidden processed image
+only, not the outer photo's pixels or metadata.
+The full lists are exported as `NOT_CHECKED` and `CAVEATS`.
 
 ## Lower-level API
 

@@ -339,8 +339,6 @@ export async function verifyReferenceImage(
     verdict: {
       status: "error",
       reasons: [],
-      notChecked: [...NOT_CHECKED],
-      caveats: [...CAVEATS],
     },
   };
   let processedJpeg: Uint8Array | null = null;

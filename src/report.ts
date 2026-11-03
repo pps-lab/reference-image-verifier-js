@@ -10,10 +10,6 @@ export interface Verdict {
   status: VerdictStatus;
   /** Human-readable reasons for the status (one line each). */
   reasons: string[];
-  /** Checks iOS performs that this library does not. */
-  notChecked: string[];
-  /** What a "pass" does and does not mean. */
-  caveats: string[];
 }
 
 export interface FileInfo {
